@@ -21,6 +21,10 @@ class ForgeryTask(DomainTask):
         }
         self.stamina_once = 40
         self.structure = [5, 5, 5, 5]
+        # 与 TacetTask/NightmareNestTask 取齐(它们都是 10)。默认 3 秒太敏感:
+        # 战斗间隙目标框短暂消失(换怪/转场)就会被判成脱战, 提前跑去找宝箱,
+        # 然后 walk_to_treasure 超时把整个日常带崩(2026-08-18 实测正是这条链)。
+        self.target_enemy_time_out = 10
         self.total_number = sum(self.structure)
         self.material_mat = None
 

@@ -22,6 +22,9 @@ class SimulationTask(DomainTask):
             'Material Selection': 'Resonator EXP / Weapon EXP / Shell Credit',
         }
         self.stamina_once = 40
+        # 与 TacetTask/NightmareNestTask 取齐, 理由同 ForgeryTask: 默认 3 秒的
+        # 目标丢失判定太敏感, 换怪间隙就可能被误判脱战。
+        self.target_enemy_time_out = 10
 
     def run(self):
         super().run()
