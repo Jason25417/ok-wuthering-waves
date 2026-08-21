@@ -252,6 +252,7 @@ config = {
     'version': version,
     'onetime_tasks': [  # tasks to execute
         ["src.task.DailyTask", "DailyTask"],
+        ["src.task.DailyTask2", "DailyTask2"],
         ["src.task.FarmEchoTask", "FarmEchoTask"],
         ["src.task.NightmareNestTask", "NightmareNestTask"],
         ["src.task.TacetTask", "TacetTask"],
