@@ -1,9 +1,15 @@
 import re
+import time
 
 from src.Labels import Labels
 from src.task.BaseWWTask import BaseWWTask
 
 FULL_BATCH_PATTERN = re.compile(r"100\s*/\s*100")
+
+# 合成循环的总预算。这个循环的退出全靠 OCR 读不到「100/100」，而合成本身是否
+# 真的生效并不被检查——若确认弹窗没点中而按钮与计数都还在，就会一直「全选→合成→确认」
+# 空转。单批含 3 秒固定等待加若干点击，正常一批约 6~8 秒，几十批也用不到 10 分钟。
+MERGE_TIME_BUDGET = 10 * 60
 
 
 class MergeEchoTask(BaseWWTask):
@@ -50,8 +56,13 @@ class MergeEchoTask(BaseWWTask):
 
     def merge_echoes(self):
         self.open_merge_page()
+        start = time.time()
         while self.merge_full_batch():
-            pass
+            if time.time() - start > MERGE_TIME_BUDGET:
+                self.log_error(
+                    f'merge_echoes: exceeded {MERGE_TIME_BUDGET}s budget, '
+                    f'stopping (merge may not be taking effect)', notify=True)
+                break
 
         self.ensure_main()
 

@@ -1,4 +1,5 @@
 import re
+import time
 
 
 from ok import Logger
@@ -6,6 +7,14 @@ from src.task.BaseCombatTask import BaseCombatTask, NotInCombatException, CharDe
 from src.task.WWOneTimeTask import WWOneTimeTask
 
 logger = Logger.get_logger(__name__)
+
+# farm_in_domain 单次进本的总预算。
+# 这个循环每轮都有会抛的有界等待（walk_until_f / combat_once / use_stamina /
+# wait_in_team_and_world），所以卡住画面不会空转；真正没被封闭的是**轮数**——
+# 它只由 use_stamina 读到的体力数隐式约束，若 OCR 持续读到不下降的高值就会一直刷。
+# 取 25 分钟：满体力约 6 轮、每轮几分钟，25 分钟对正常流程宽松；而外层
+# farm_domain_with_recovery_loop 最多重试 3 次，3×25=75 分钟仍在外层调度的止损内。
+FARM_IN_DOMAIN_TIME_BUDGET = 25 * 60
 
 
 class DomainTask(WWOneTimeTask, BaseCombatTask):
@@ -81,7 +90,15 @@ class DomainTask(WWOneTimeTask, BaseCombatTask):
         if self.stamina_once <= 0:
             raise RuntimeError('"self.stamina_once" must be override')
         self.info_incr('used stamina', 0)
+        start = time.time()
         while True:
+            if time.time() - start > FARM_IN_DOMAIN_TIME_BUDGET:
+                # 返回 True 而不是 False 是刻意的：False 表示「角色死亡」，会让
+                # farm_domain_with_recovery_loop 当成可恢复失败再进本一次，
+                # 把一份超时预算变成三份。这里的语义是「时间到了，正常收工」。
+                self.log_error('farm_in_domain: exceeded time budget, exiting domain', notify=True)
+                self.make_sure_in_world()
+                return True, must_use
             self.walk_until_f(time_out=4, backward_time=0, raise_if_not_found=True)
             self.pick_f()
             try:
