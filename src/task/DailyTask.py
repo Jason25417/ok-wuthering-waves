@@ -74,7 +74,41 @@ class DailyTask(WWOneTimeTask, BaseCombatTask):
         self.add_exit_after_config()
         self.description = "Login, claim monthly card, farm echo, and claim daily reward"
 
+    def run_step_isolated(self, name, func, *args, **kwargs):
+        """执行日常里的一步，该步失败不影响后面的步骤。返回是否成功。
+
+        为什么需要：run() 原本是一条直线，中间任何一步抛异常，后面全部跳过。
+        2026-08-18 实测：体力已经刷完（最贵的一步），却卡在 walk_to_treasure 超时，
+        于是当天的每日奖励、邮件、战令、合声骸一个都没领 —— 丢的全是白拿的资源，
+        而且最贵的那步其实已经做完了。
+
+        写法照搬本文件 need_nightmare 段已有的模板（log_error + screenshot +
+        ensure_main 回主界面），只是抽成可复用的形式。
+
+        TaskDisabledException 必须原样抛出：那是用户点了停止/退出，不是"某步失败"，
+        吞掉它会让停止按钮失灵。
+        """
+        try:
+            func(*args, **kwargs)
+            return True
+        except TaskDisabledException:
+            raise
+        except Exception as e:
+            self.log_error(f'{name} Failed', e)
+            self.screenshot(name)
+            self.failed_steps.append(name)
+            # 回主界面，给下一步一个干净的起点；回不去也不要在这里中断，
+            # 让下一步自己的 ensure_main 去处理。
+            try:
+                self.ensure_main(time_out=180)
+            except TaskDisabledException:
+                raise
+            except Exception:
+                pass
+            return False
+
     def run(self):
+        self.failed_steps = []
         self.validate_additional_tasks()
 
         WWOneTimeTask.run(self)
@@ -117,22 +151,32 @@ class DailyTask(WWOneTimeTask, BaseCombatTask):
         if need_stamina:
             target = self.config.get('Which to Farm', self.support_tasks[0])
             if target == self.support_tasks[0]:
-                self.get_task_by_class(TacetTask).farm_tacet(daily=True, used_stamina=used_stamina,
-                                                             config=self.config)
+                self.run_step_isolated('FarmTacet', self.get_task_by_class(TacetTask).farm_tacet,
+                                       daily=True, used_stamina=used_stamina, config=self.config)
             elif target == self.support_tasks[1]:
-                self.get_task_by_class(ForgeryTask).farm_forgery(daily=True, used_stamina=used_stamina,
-                                                                 config=self.config)
+                self.run_step_isolated('FarmForgery', self.get_task_by_class(ForgeryTask).farm_forgery,
+                                       daily=True, used_stamina=used_stamina, config=self.config)
             else:
-                self.get_task_by_class(SimulationTask).farm_simulation(daily=True, used_stamina=used_stamina,
-                                                                       config=self.config)
+                self.run_step_isolated('FarmSimulation', self.get_task_by_class(SimulationTask).farm_simulation,
+                                       daily=True, used_stamina=used_stamina, config=self.config)
             self.sleep(4)
 
-        self.claim_daily()
-
-        self.claim_mail()
+        # 领取类步骤逐个隔离：它们互不依赖，前一个失败不该让后面的白白跳过。
+        # 这几项拿的都是免费资源，漏掉就是当天净亏。
+        self.run_step_isolated('ClaimDaily', self.claim_daily)
+        self.run_step_isolated('ClaimMail', self.claim_mail)
         self.sleep(1)
-        self.claim_battle_pass()
-        self.run_additional_tasks()
+        self.run_step_isolated('ClaimBattlePass', self.claim_battle_pass)
+        self.run_step_isolated('AdditionalTasks', self.run_additional_tasks)
+
+        if self.failed_steps:
+            # 关键：这里必须抛出而不是安静收场。
+            # 「Successfully Executed Task」是框架在 task.run() 正常返回后才打的
+            # (TaskExecutor 的 Exit After Task 分支)，外层调度器正是靠它判定成败。
+            # 若这里吞掉失败让 run() 正常返回，"刷完体力但一个奖励都没领"会被判成
+            # 完全成功——比原来的行为更危险。
+            # 所以语义是：尽力把能做的都做完，但只要有失败，整体就算失败。
+            raise Exception('Daily Task finished with failed steps: ' + ', '.join(self.failed_steps))
         self.log_info('Daily Task Completed', notify=True)
 
     def validate_additional_tasks(self):
