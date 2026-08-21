@@ -1,13 +1,16 @@
 import re
+import time
 
 
-from ok import Logger, run_task
+from ok import Logger, WaitFailedException, run_task
 from config import config
 from src.Labels import Labels
 from src.task.BaseWWTask import BaseWWTask
 from src.task.WWOneTimeTask import WWOneTimeTask
 
 logger = Logger.get_logger(__name__)
+
+GARDEN_TIME_LIMIT = 'Garden Time Limit (min)'
 
 
 class GardenTask(WWOneTimeTask, BaseWWTask):
@@ -17,6 +20,13 @@ class GardenTask(WWOneTimeTask, BaseWWTask):
         super().__init__(*args, **kwargs)
         self.name = "🎡 自动周常乐园"
         self.description = "Detect and click garden actions until the task is stopped."
+        self.default_config = {
+            GARDEN_TIME_LIMIT: 90,
+        }
+        self.config_description = {
+            GARDEN_TIME_LIMIT: 'Give up if the garden loop runs longer than this many minutes '
+                               '(the loop has no other time bound; 0 = no limit).',
+        }
         self.garden_features = [
             label.value for label in Labels
             if label.value.startswith("garden_")
@@ -34,7 +44,18 @@ class GardenTask(WWOneTimeTask, BaseWWTask):
             self.log_info('乐园任务完成, 已达到上限', notify=True)
             return
         self.click(0.246, 0.486, after_sleep=1)
+        # 墙钟兜底：本循环唯一的出口是「识别到结算页 且 积分已满」。一旦识别抖动
+        # 到既找不到任何 garden_* 特征、又找不到结算页的状态，就会每 0.5 秒空转一轮
+        # 且没有任何计数或时间预算——无人值守时会一直转到外层止损。
+        # 上限取配置项（默认 90 分钟）：满 6000 分约需 15 轮，实测一轮几分钟，
+        # 90 分钟对正常流程是宽松余量，只拦真正的空转。
+        limit_min = self.config.get(GARDEN_TIME_LIMIT, 90)
+        # 0 = 不限时，给不想要这个保护的用户留出口
+        deadline = time.time() + limit_min * 60 if limit_min else None
         while True:
+            if deadline and time.time() > deadline:
+                raise WaitFailedException(
+                    f'garden task exceeded time limit of {limit_min} minutes')
             self.sleep(0.1)
             target = self.find_best_garden_feature()
             self.sleep(0.2)
