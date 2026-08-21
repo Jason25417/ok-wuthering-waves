@@ -108,7 +108,9 @@ class StepPipeline:
                 self.log_error(f'step {name} attempt {attempt + 1}/{retry + 1} failed', e)
                 self.screenshot(f'step_{name}_attempt{attempt + 1}')
                 if attempt < retry and recover:
-                    self._recover()
+                    if not self._recover():
+                        # 恢复失败 = 游戏死了/断线, 重试也是白试, 直接跳出重试环
+                        break
 
         self.step_elapsed[name] = round(time.time() - start, 1)
         self._set_status(name, FAILED)
@@ -116,8 +118,11 @@ class StepPipeline:
             self._pipeline_failed_required.append((name, str(last_error)))
         else:
             self._pipeline_failed_optional.append((name, str(last_error)))
-        if recover:
-            self._recover()
+        if recover and not self._recover():
+            # 连主界面都回不去, 后面每一步都注定失败。继续硬走只会把快败拖成
+            # 每步一次超时的慢磨, 吃掉外层止损里的重试窗口 —— 直接放弃剩余步骤,
+            # 把机会留给链层重试。
+            raise last_error
         return False
 
     def pipeline_finish(self, success_message='Task Completed'):
@@ -138,11 +143,16 @@ class StepPipeline:
         self.info_set(f'Step: {name}', status)
 
     def _recover(self):
+        """回主界面。返回是否成功 —— 调用方据此决定继续还是放弃(fail-fast)。
+
+        time_out 用 60 而不是照抄任务开头的 180: 这里是步骤间的恢复, 游戏若还活着
+        60 秒足够回到主界面; 回不去基本就是游戏死了/断线, 多等 120 秒只是拖慢失败。
+        """
         try:
-            self.ensure_main(time_out=180)
+            self.ensure_main(time_out=60)
+            return True
         except TaskDisabledException:
             raise
         except Exception as e:
-            # 回不去也不在这里中断 —— 下一步自己的 ensure_main / 识别会处理,
-            # 处理不了会作为下一步的失败被记录, 不会静默丢失
             logger.warning(f'recover to main failed: {e}')
+            return False
