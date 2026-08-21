@@ -790,7 +790,7 @@ class BaseWWTask(BaseTask):
                 if boxes := self.find_boxes(texts, boundary=self.box_of_screen(0.37, 0.63, 0.63, 0.99, hcenter=True,
                                                                                vcenter=True)):
                     self.log_info(f'wait_login {switch_login} {boxes}')
-                    self.click_relative(0.503, 0.926, hcenter=True, vcenter=True, after_sleep=3)
+                    self.click(boxes, after_sleep=3)
                     return False
 
     def in_team_and_world(self):
